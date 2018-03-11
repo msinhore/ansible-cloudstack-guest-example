@@ -45,12 +45,12 @@
 
     - name: "Registering the Public IP {{ public_ip.ip_address }} in DNS server"
       gcdns_record:
-        service_account_email: "dnsupdater@shapeblue-brazil.iam.gserviceaccount.com"
-        credentials_file: "/Users/msinhore/.gcloud.json"
+        service_account_email: "google_client_email@your-project-on-google-cloud.iam.gserviceaccount.com"
+        credentials_file: "~/.gcloud.json"
         overwrite: true
-        project_id: "shapeblue-brazil"
-        record: "meetup-site.shapeblue.com.br"
-        zone: "shapeblue.com.br"
+        project_id: "your-project-on-google-cloud"
+        record: "your-test-site.example.com"
+        zone: "example.com"
         type: A
         value: "{{ public_ip.ip_address }}"
       ignore_errors: True
@@ -135,6 +135,6 @@
         project: "{{ project }}"
       with_items: "{{ instances.results }}"
 
-    - name: "Environment ready! Open the browser and access the page http://meetup-site.shapeblue.com.br/"
+    - name: "Environment ready! Open the browser and access the page http://your-test-site.example.com/"
       debug:
         msg: Enjoy and hack it! 
