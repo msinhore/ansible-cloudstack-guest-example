@@ -1,0 +1,140 @@
+---
+- name: Creating CloudStack Resources
+  hosts: localhost  
+
+  vars:
+    project: "Meetup Maplink"
+    
+
+  tasks:
+    - name: Creating Network
+      cs_network:
+        name: meetup-network
+        project: "{{ project }}"
+        network_offering: DefaultIsolatedNetworkOfferingWithSourceNatService
+
+    - name: Getting Public IP Address
+      cs_ip_address:
+        network: meetup-network
+        project: "{{ project }}"
+      register: public_ip
+
+    - name: Enabling egress rules 
+      cs_firewall:
+        network: meetup-network
+        type: egress
+        protocol: all
+        project: "{{ project }}"
+        
+    - name: Configuring the firewall
+      cs_firewall:
+        ip_address: "{{ public_ip.ip_address }}"
+        port: 80
+        cidr: 0.0.0.0/0
+        project: "{{ project }}"
+        
+    - name: Creating a Load Banlance for HTTP service
+      cs_loadbalancer_rule:
+        name: balance_http_meetup
+        public_ip: "{{ public_ip.ip_address }}"
+        algorithm: leastconn
+        public_port: 80
+        private_port: 80
+        project: "{{ project }}"
+      register: lb_http
+
+    - name: "Registering the Public IP {{ public_ip.ip_address }} in DNS server"
+      gcdns_record:
+        service_account_email: "dnsupdater@shapeblue-brazil.iam.gserviceaccount.com"
+        credentials_file: "/Users/msinhore/.gcloud.json"
+        overwrite: true
+        project_id: "shapeblue-brazil"
+        record: "meetup-site.shapeblue.com.br"
+        zone: "shapeblue.com.br"
+        type: A
+        value: "{{ public_ip.ip_address }}"
+      ignore_errors: True
+
+- name: Creating CloudStack Instances
+  hosts: localhost
+
+  vars:
+    service_offering: "1CPU, 2 GB RAM, High Availability"
+    template: "CentOS - 7.4 (cloud-init)"
+    ssh_key: defaultkey  
+    network: meetup-network
+    project: "Meetup Maplink"
+    count: 2
+
+  tasks:
+    - name: Uploading ssh key
+      cs_sshkeypair:
+        name: "{{ ssh_key }}"
+        project: "{{ project }}"
+        public_key: "{{ lookup('file', '/Users/msinhore/.ssh/id_rsa.pub') }}"
+
+    - name: Create Instances
+      cs_instance:
+        name: instance-0{{ item }}
+        project: "{{ project }}"
+        display_name: instance-0{{ item }}
+        template: "{{ template }}"
+        service_offering: "{{ service_offering }}"
+        api_timeout: 300
+        ssh_key: "{{ ssh_key }}"
+        user_data: |
+            #cloud-config
+            packages:
+              - httpd
+            runcmd:
+              - [ /usr/bin/systemctl, enable, httpd ]
+              - [ /usr/bin/systemctl, start, httpd ]
+              - [ sh,  -xc, "echo -n '<!doctype html><html><head></head><body style=background-color:powderblue;><h1 align=center>My APP on:</h1><h2 align=center>' > /var/www/html/index.html" ]
+              - [ sh,  -xc, "echo -n $HOSTNAME >> /var/www/html/index.html" ]
+              - [ sh,  -xc, "echo '</h2></body></html>' >> /var/www/html/index.html" ]
+              - [ /usr/bin/chown, apache, /var/www/html/index.html ]
+              - [ /usr/bin/firewall-cmd,  --permanent, --zone=public, --add-service=http ]
+              - [ /usr/bin/firewall-cmd, --reload ]
+        ip_to_networks:
+        - network: "{{ network }}"
+          ip: "172.30.200.1{{ item }}"
+      register: instances
+      with_sequence: 
+        count={{ count }}
+
+    - name: Registering instances in the inventory
+      add_host:
+        hostname="{{ public_ip.ip_address }}"
+        groups=created_instances
+        ansible_host="{{ item.display_name }}"
+        ansible_user=centos
+        ansible_port=222{{ item.item }}
+      with_items: "{{ instances.results }}"
+
+    - name: Add SSH port forward
+      cs_portforward:
+        ip_address: "{{ public_ip.ip_address }}"
+        vm: "{{ item.display_name }}"
+        public_port: "222{{ item.item }}"
+        private_port: 22
+        project: "{{ project }}"
+      with_items: "{{ instances.results }}"
+
+    - name: Configuring the firewall
+      cs_firewall:
+        ip_address: "{{ public_ip.ip_address }}"
+        port: "222{{ item.item }}"
+        cidr: 0.0.0.0/0
+        project: "{{ project }}"
+      with_items: "{{ instances.results }}"
+    
+    - name: Add instances in the load balancer
+      cs_loadbalancer_rule_member:
+        name: balance_http_meetup
+        vms: "{{ item.display_name }}"
+        project: "{{ project }}"
+      with_items: "{{ instances.results }}"
+
+    - name: "Environment ready! Open the browser and access the page http://meetup-site.shapeblue.com.br/"
+      debug:
+        msg: Enjoy and hack it! 

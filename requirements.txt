@@ -1,0 +1,5 @@
+ansible
+cs
+sshpubkeys
+apache-libcloud
+pycrypto
